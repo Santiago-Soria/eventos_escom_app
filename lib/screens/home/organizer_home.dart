@@ -2,9 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:proyecto_eventos/services/auth_services.dart';
-import 'package:proyecto_eventos/services/event_service.dart';
-import 'package:proyecto_eventos/widgets/custom_alert_dialog.dart'; // <--- IMPORTANTE
+import 'package:proyecto_eventos/widgets/custom_alert_dialog.dart';
 
 // Pantallas
 import 'package:proyecto_eventos/screens/events/manage_event_screen.dart';
@@ -23,7 +21,6 @@ class OrganizerHome extends StatefulWidget {
 class _OrganizerHomeState extends State<OrganizerHome> {
   int _currentIndex = 0;
   final currentUser = FirebaseAuth.instance.currentUser;
-  final EventService _eventService = EventService();
 
   String _searchText = "";
 
