@@ -1,445 +1,252 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:proyecto_eventos/services/event_service.dart';
 import 'package:proyecto_eventos/screens/events/event_details_screen.dart';
+import 'package:proyecto_eventos/screens/events/filter_modal.dart'; // <--- IMPORTANTE
 
 class ExploreEventsTab extends StatefulWidget {
-  const ExploreEventsTab({super.key});
+  final bool isOrganizer;
+  const ExploreEventsTab({super.key, this.isOrganizer = false});
 
   @override
   State<ExploreEventsTab> createState() => _ExploreEventsTabState();
 }
 
 class _ExploreEventsTabState extends State<ExploreEventsTab> {
-  final EventService _eventService = EventService();
-  
-  String? _selectedCategoryId; 
-  String? _selectedLocationId; 
+  final currentUser = FirebaseAuth.instance.currentUser;
+
+  // Estado de Búsqueda y Filtros
+  String _searchText = "";
+  String? _selectedCategoryId;
+  String? _selectedLocationId;
   DateTime? _selectedDate;
+
+  // --- ABRIR EL MODAL DE FILTROS (REUTILIZABLE) ---
+  void _showFilterDialog() async {
+    final result = await showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => FilterModal(
+        initialCategory: _selectedCategoryId,
+        initialLocation: _selectedLocationId,
+        initialDate: _selectedDate,
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _selectedCategoryId = result['category'];
+        _selectedLocationId = result['location'];
+        _selectedDate = result['date'];
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // 1. BARRA DE BÚSQUEDA Y FILTRO
-        Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  decoration: InputDecoration(
-                    hintText: "Buscar eventos...",
-                    prefixIcon: const Icon(Icons.search),
-                    filled: true,
-                    fillColor: Colors.grey[200],
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(30),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 0),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              // Botón de Filtro
-              InkWell(
-                onTap: _showFilterModal,
-                child: Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: (_selectedCategoryId != null || _selectedLocationId != null || _selectedDate != null)
-                        ? const Color(0xFF1E4079) 
-                        : Colors.grey[300],
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(
-                    Icons.filter_list, 
-                    color: (_selectedCategoryId != null || _selectedLocationId != null || _selectedDate != null)
-                        ? Colors.white 
-                        : const Color(0xFF1E4079)
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-
-        // 2. TÍTULO
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 16.0),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              "Eventos disponibles",
-              style: TextStyle(
-                fontSize: 18, 
-                fontWeight: FontWeight.bold, 
-                color: Colors.white
-              ),
+    return Scaffold(
+      extendBody: true,
+      resizeToAvoidBottomInset: false,
+      body: Stack(
+        children: [
+          // 1. FONDO UNIFICADO
+          Positioned.fill(
+            child: Image.asset(
+              "assets/images/escom_bg.png",
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(color: const Color(0xFF010415));
+              },
             ),
           ),
-        ),
-        const SizedBox(height: 10),
-
-        // 3. LISTA DE EVENTOS
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: _eventService.getEvents(
-              categoryId: _selectedCategoryId,
-              locationId: _selectedLocationId,
-            ),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-              
-              // --- MANEJO DE ERRORES ---
-              // Si hay un error (como falta de índices), lo mostramos en consola
-              if (snapshot.hasError) {
-                return Center(child: Text("Error al cargar: ${snapshot.error}", style: const TextStyle(color: Colors.red)));
-              }
-
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                return const Center(child: Text("No hay eventos con estos filtros.", style: TextStyle(color: Colors.grey)));
-              }
-
-              // Obtenemos la lista de documentos
-              List<QueryDocumentSnapshot> events = snapshot.data!.docs;
-
-              // --- ORDENAMIENTO EN CLIENTE (SOLUCIÓN) ---
-              // Como quitamos el orderBy de Firestore, ordenamos aquí manualmente por fecha
-              events.sort((a, b) {
-                Timestamp tA = a['startTimestamp'];
-                Timestamp tB = b['startTimestamp'];
-                return tA.compareTo(tB); // Orden ascendente (más próximo primero)
-              });
-
-              return ListView.builder(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                itemCount: events.length,
-                itemBuilder: (context, index) {
-                  final eventDoc = events[index];
-                  final eventData = eventDoc.data() as Map<String, dynamic>;
-                  final String eventId = eventDoc.id;
-
-                  // Filtrado de fecha en cliente
-                  if (_selectedDate != null) {
-                    final DateTime eventDate = (eventData['startTimestamp'] as Timestamp).toDate();
-                    if (!_isSameDay(eventDate, _selectedDate!)) {
-                      return const SizedBox.shrink(); 
-                    }
-                  }
-
-                  return _buildEventCard(context, eventId, eventData);
-                },
-              );
-            },
+          Positioned.fill(
+            child: Container(color: Colors.black.withValues(alpha: 0.3)),
           ),
-        ),
-      ],
-    );
-  }
 
-  // --- MODAL DE FILTROS DINÁMICO ---
-  void _showFilterModal() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(25)),
-      ),
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (BuildContext context, StateSetter setModalState) {
-            return Container(
-              padding: const EdgeInsets.all(20),
-              height: MediaQuery.of(context).size.height * 0.8, 
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 50, height: 5,
-                      decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10)),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          // 2. CONTENIDO
+          SafeArea(
+            bottom: false,
+            child: Column(
+              children: [
+                // HEADER (Buscador y Botón Filtro)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+                  child: Row(
                     children: [
-                      const Text("Filtros", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-                      if (_selectedCategoryId != null || _selectedLocationId != null || _selectedDate != null)
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _selectedCategoryId = null;
-                              _selectedDate = null;
-                              _selectedLocationId = null;
-                            });
-                            Navigator.pop(context);
-                          }, 
-                          child: const Text("Borrar todo")
-                        )
+                      // Logo
+                      Expanded(
+                        flex: 2,
+                        child: Row(
+                          children: [
+                            Image.asset(
+                              "assets/images/logo.png",
+                              height: 30,
+                              errorBuilder: (c, e, s) =>
+                                  const Icon(Icons.event, color: Colors.blue),
+                            ),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'EventOS',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 22,
+                                fontFamily: 'League Spartan',
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Buscador
+                      Expanded(
+                        flex: 3,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Container(
+                                height: 35,
+                                decoration: ShapeDecoration(
+                                  color: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(30),
+                                  ),
+                                ),
+                                child: TextField(
+                                  textAlignVertical: TextAlignVertical.center,
+                                  style: const TextStyle(
+                                    color: Colors.black,
+                                    fontSize: 14,
+                                  ),
+                                  decoration: const InputDecoration(
+                                    hintText: "Buscar...",
+                                    prefixIcon: Icon(
+                                      Icons.search,
+                                      size: 20,
+                                      color: Colors.grey,
+                                    ),
+                                    border: InputBorder.none,
+                                    contentPadding: EdgeInsets.only(bottom: 12),
+                                  ),
+                                  onChanged: (val) => setState(
+                                    () => _searchText = val.toLowerCase(),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            // Botón Filtro
+                            GestureDetector(
+                              onTap: _showFilterDialog,
+                              child: Container(
+                                width: 35,
+                                height: 35,
+                                decoration: const BoxDecoration(
+                                  color: Colors.white,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  Icons.filter_list,
+                                  size: 20,
+                                  color: (_selectedCategoryId != null ||
+                                          _selectedLocationId != null ||
+                                          _selectedDate != null)
+                                      ? const Color(0xFF2660A5)
+                                      : Colors.black54,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                  
-                  const SizedBox(height: 20),
-                  
-                  // --- SECCIÓN CATEGORÍA (Desde Firestore) ---
-                  const Text("Categoría", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  StreamBuilder<QuerySnapshot>(
-                    stream: _eventService.getCategories(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const LinearProgressIndicator();
-                      
-                      final categories = snapshot.data!.docs;
-                      
-                      return Wrap(
-                        spacing: 8,
-                        children: categories.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          final String id = doc.id; 
-                          final String name = data['name'] ?? id; 
-                          final bool isSelected = _selectedCategoryId == id;
+                ),
 
-                          return ChoiceChip(
-                            label: Text(name),
-                            selected: isSelected,
-                            onSelected: (bool selected) {
-                              setModalState(() => _selectedCategoryId = selected ? id : null);
-                            },
-                            selectedColor: Colors.blue[100],
-                            backgroundColor: Colors.white,
-                            side: BorderSide(color: isSelected ? Colors.transparent : Colors.grey.shade300),
-                            labelStyle: TextStyle(
-                              color: isSelected ? const Color(0xFF1E4079) : Colors.black,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    }
+                // FILTROS ACTIVOS (Chips)
+                _buildActiveFilters(),
+
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 20.0),
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      'Próximos Eventos',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontFamily: 'Montserrat',
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
+                ),
+                const SizedBox(height: 10),
 
-                  const SizedBox(height: 20),
+                // LISTA DE EVENTOS
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: _getEventsStream(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
 
-                  // --- SECCIÓN FECHA ---
-                  const Text("Fecha", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  InkWell(
-                    onTap: () async {
-                      DateTime? picked = await showDatePicker(
-                        context: context,
-                        initialDate: _selectedDate ?? DateTime.now(),
-                        firstDate: DateTime(2024),
-                        lastDate: DateTime(2030),
-                        builder: (context, child) {
-                          return Theme(
-                            data: ThemeData.light().copyWith(
-                              primaryColor: const Color(0xFF1E4079), 
-                              colorScheme: const ColorScheme.light(primary: Color(0xFF1E4079)),
-                            ),
-                            child: child!,
-                          );
+                      var docs = snapshot.data?.docs ?? [];
+
+                      // Filtros Client-Side (Texto y Fecha Exacta)
+                      if (_selectedDate != null) {
+                        docs = docs.where((doc) {
+                          var data = doc.data() as Map<String, dynamic>;
+                          if (data['date'] == null) return false;
+                          DateTime eventDate =
+                              (data['date'] as Timestamp).toDate();
+                          return eventDate.year == _selectedDate!.year &&
+                              eventDate.month == _selectedDate!.month &&
+                              eventDate.day == _selectedDate!.day;
+                        }).toList();
+                      }
+
+                      if (_searchText.isNotEmpty) {
+                        docs = docs.where((doc) {
+                          var data = doc.data() as Map<String, dynamic>;
+                          String title =
+                              (data['title'] ?? '').toString().toLowerCase();
+                          return title.contains(_searchText);
+                        }).toList();
+                      }
+
+                      if (docs.isEmpty) {
+                        return Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: const [
+                              Icon(
+                                Icons.event_busy,
+                                size: 50,
+                                color: Colors.white70,
+                              ),
+                              SizedBox(height: 10),
+                              Text(
+                                "No se encontraron eventos",
+                                style: TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(20, 10, 20, 100),
+                        itemCount: docs.length,
+                        itemBuilder: (context, index) {
+                          return _buildEventCard(docs[index]);
                         },
                       );
-                      if (picked != null) {
-                        setModalState(() => _selectedDate = picked);
-                      }
                     },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade300),
-                        borderRadius: BorderRadius.circular(10),
-                        color: _selectedDate != null ? Colors.blue[50] : Colors.white
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            _selectedDate == null 
-                            ? "Seleccionar fecha" 
-                            : DateFormat('dd/MM/yyyy').format(_selectedDate!),
-                            style: TextStyle(
-                              color: _selectedDate != null ? const Color(0xFF1E4079) : Colors.black,
-                              fontWeight: _selectedDate != null ? FontWeight.bold : FontWeight.normal
-                            ),
-                          ),
-                          Icon(Icons.calendar_today, size: 20, 
-                            color: _selectedDate != null ? const Color(0xFF1E4079) : Colors.grey
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-
-                  // --- SECCIÓN UBICACIÓN (Desde Firestore) ---
-                  const Text("Ubicación", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 10),
-                  StreamBuilder<QuerySnapshot>(
-                    stream: _eventService.getLocations(),
-                    builder: (context, snapshot) {
-                      if (!snapshot.hasData) return const LinearProgressIndicator();
-                      
-                      final locations = snapshot.data!.docs;
-                      
-                      return Wrap(
-                        spacing: 8,
-                        children: locations.map((doc) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          final String id = doc.id; 
-                          final String name = data['name'] ?? 'Sin nombre'; 
-                          final bool isSelected = _selectedLocationId == id;
-
-                          return ChoiceChip(
-                            label: Text(name),
-                            selected: isSelected,
-                            onSelected: (bool selected) {
-                              setModalState(() => _selectedLocationId = selected ? id : null);
-                            },
-                            selectedColor: Colors.blue[100],
-                            backgroundColor: Colors.white,
-                            side: BorderSide(color: isSelected ? Colors.transparent : Colors.grey.shade300),
-                            labelStyle: TextStyle(
-                              color: isSelected ? const Color(0xFF1E4079) : Colors.black,
-                              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
-                            ),
-                          );
-                        }).toList(),
-                      );
-                    }
-                  ),
-
-                  const Spacer(),
-                  
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () {
-                        setState(() {}); 
-                        Navigator.pop(context);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1E4079),
-                        foregroundColor: Colors.white,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                      ),
-                      child: const Text("Aplicar Filtros", style: TextStyle(fontSize: 18)),
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Widget _buildEventCard(BuildContext context, String eventId, Map<String, dynamic> data) {
-    final DateTime start = (data['startTimestamp'] as Timestamp).toDate();
-    final DateTime end = (data['endTimestamp'] as Timestamp).toDate();
-    final String dateString = DateFormat('dd/MM/yyyy').format(start);
-    final String timeString = "${DateFormat('h:mm a').format(start)} a ${DateFormat('h:mm a').format(end)}";
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 20),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      elevation: 4,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Stack(
-            children: [
-              ClipRRect(
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-                child: Image.network(
-                  data['imageUrl'] ?? 'https://via.placeholder.com/400x200',
-                  height: 150,
-                  width: double.infinity,
-                  fit: BoxFit.cover,
-                  errorBuilder: (ctx, _, __) => Container(
-                    height: 150, color: Colors.grey[300], 
-                    child: const Icon(Icons.image, size: 50, color: Colors.grey),
                   ),
                 ),
-              ),
-              Positioned(
-                top: 10,
-                left: 10,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Column(
-                    children: [
-                      Text(
-                        DateFormat('d').format(start),
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF1E4079)),
-                      ),
-                      Text(
-                        DateFormat('MMM').format(start).toUpperCase(),
-                        style: const TextStyle(fontSize: 10, color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            ],
-          ),
-          
-          Padding(
-            padding: const EdgeInsets.all(15),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  data['title'] ?? 'Evento',
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  "Organizado por: ${data['organizerName'] ?? 'Desconocido'}",
-                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 5),
-                Text(
-                  "$dateString - $timeString",
-                  style: TextStyle(color: Colors.grey[600], fontSize: 13),
-                ),
-                const SizedBox(height: 15),
-                
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: ElevatedButton(
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => EventDetailsScreen(
-                            eventId: eventId,
-                            eventData: data,
-                          ),
-                        ),
-                      );
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF1E4079),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-                    ),
-                    child: const Text("Ver detalles"),
-                  ),
-                )
               ],
             ),
           ),
@@ -447,8 +254,223 @@ class _ExploreEventsTabState extends State<ExploreEventsTab> {
       ),
     );
   }
-  
-  bool _isSameDay(DateTime d1, DateTime d2) {
-    return d1.year == d2.year && d1.month == d2.month && d1.day == d2.day;
+
+  // --- QUERY STREAM ---
+  Stream<QuerySnapshot> _getEventsStream() {
+    Query query = FirebaseFirestore.instance.collection('events');
+
+    // Filtros de servidor (Categoría y Ubicación)
+    if (_selectedCategoryId != null) {
+      query = query.where('categoryId', isEqualTo: _selectedCategoryId);
+    }
+    if (_selectedLocationId != null) {
+      query = query.where('locationId', isEqualTo: _selectedLocationId);
+    }
+
+    // Ordenar por fecha (requiere índice compuesto si se combina con filtros)
+    return query.orderBy('date', descending: false).snapshots();
+  }
+
+  // --- WIDGET FILTROS ACTIVOS ---
+  Widget _buildActiveFilters() {
+    if (_selectedCategoryId == null &&
+        _selectedLocationId == null &&
+        _selectedDate == null) {
+      return const SizedBox(height: 10);
+    }
+
+    return Container(
+      height: 40,
+      margin: const EdgeInsets.only(bottom: 10),
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 20),
+        children: [
+          if (_selectedDate != null)
+            _buildFilterChip(
+              label: DateFormat('dd/MM/yyyy').format(_selectedDate!),
+              icon: Icons.calendar_today,
+              onDeleted: () => setState(() => _selectedDate = null),
+            ),
+          if (_selectedCategoryId != null)
+            _buildFilterChip(
+              label: "Categoría",
+              icon: Icons.category,
+              onDeleted: () => setState(() => _selectedCategoryId = null),
+            ),
+          if (_selectedLocationId != null)
+            _buildFilterChip(
+              label: "Ubicación",
+              icon: Icons.location_on,
+              onDeleted: () => setState(() => _selectedLocationId = null),
+            ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _selectedCategoryId = null;
+                _selectedLocationId = null;
+                _selectedDate = null;
+              });
+            },
+            child: const Text(
+              "Borrar todo",
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip({
+    required String label,
+    required IconData icon,
+    required VoidCallback onDeleted,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(right: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2660A5),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white24),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 14, color: Colors.white),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: const TextStyle(color: Colors.white, fontSize: 12),
+          ),
+          const SizedBox(width: 5),
+          GestureDetector(
+            onTap: onDeleted,
+            child: const Icon(Icons.close, size: 16, color: Colors.white70),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // --- TARJETA DE EVENTO (PÚBLICA) ---
+  Widget _buildEventCard(DocumentSnapshot doc) {
+    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+    String title = data['title'] ?? 'Sin título';
+    String imageUrl = data['imageUrl'] ?? '';
+
+    DateTime date;
+    if (data['date'] != null) {
+      date = (data['date'] as Timestamp).toDate();
+    } else {
+      date = DateTime.now();
+    }
+    String dateString = DateFormat('dd/MM/yyyy').format(date);
+    String timeString = data['startTime'] ?? '--:--';
+
+    return GestureDetector(
+      onTap: () {
+        // Navegar a Detalle
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => EventDetailsScreen(
+              eventSnapshot: doc,
+              isOrganizer: widget.isOrganizer,
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 20),
+        height: 180,
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.2), // Fix deprecation
+              blurRadius: 8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(20),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: imageUrl.isNotEmpty
+                    ? Image.network(imageUrl, fit: BoxFit.cover)
+                    : Container(color: Colors.grey[300]),
+              ),
+
+              // Gradiente Inferior
+              Positioned(
+                bottom: 0,
+                left: 0,
+                right: 0,
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.transparent,
+                        Colors.black.withValues(alpha: 0.9), // Fix deprecation
+                      ],
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              title,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              "$dateString  •  $timeString",
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      // Botón visual "Ver más"
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2660A5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.arrow_forward,
+                          color: Colors.white,
+                          size: 16,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

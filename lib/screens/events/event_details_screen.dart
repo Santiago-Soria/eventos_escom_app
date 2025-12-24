@@ -1,263 +1,333 @@
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:intl/intl.dart'; 
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:proyecto_eventos/services/event_service.dart';
+import 'package:proyecto_eventos/widgets/custom_alert_dialog.dart';
 
-class EventDetailsScreen extends StatelessWidget {
-  final String eventId;
-  final Map<String, dynamic> eventData;
+class EventDetailsScreen extends StatefulWidget {
+  final DocumentSnapshot eventSnapshot;
+  final bool isOrganizer;
 
   const EventDetailsScreen({
     super.key,
-    required this.eventId,
-    required this.eventData,
+    required this.eventSnapshot,
+    this.isOrganizer = false,
   });
 
   @override
+  State<EventDetailsScreen> createState() => _EventDetailsScreenState();
+}
+
+class _EventDetailsScreenState extends State<EventDetailsScreen> {
+  final currentUser = FirebaseAuth.instance.currentUser;
+  final EventService _eventService = EventService();
+  bool _isRegistering = false;
+  bool _isRegistered = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkRegistrationStatus();
+  }
+
+  void _checkRegistrationStatus() {
+    if (currentUser == null) return;
+    FirebaseFirestore.instance
+        .collection('events')
+        .doc(widget.eventSnapshot.id)
+        .collection('attendees')
+        .doc(currentUser!.uid)
+        .snapshots()
+        .listen((snapshot) {
+      if (mounted) {
+        setState(() {
+          _isRegistered = snapshot.exists;
+        });
+      }
+    });
+  }
+
+  Future<void> _registerForEvent() async {
+    if (currentUser == null) return;
+    setState(() => _isRegistering = true);
+
+    try {
+      await _eventService.registerAttendance(widget.eventSnapshot.id);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text("¡Registro exitoso!"),
+              backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isRegistering = false);
+    }
+  }
+
+  Future<void> _cancelRegistration() async {
+    // ALERTA UNIFICADA
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => const CustomAlertDialog(
+        title: "¿Eliminar registro?",
+        content:
+            "Si eliminas tu registro, liberarás tu lugar. Podrás registrarte de nuevo si hay cupo.",
+        confirmText: "Sí", // Botón corto para consistencia y evitar overflow
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() => _isRegistering = true);
+      try {
+        await _eventService.cancelAttendance(widget.eventSnapshot.id);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text("Haz eliminado tu registro en el evento")),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content: Text("Error al cancelar: $e"),
+                backgroundColor: Colors.red),
+          );
+        }
+      } finally {
+        if (mounted) setState(() => _isRegistering = false);
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final EventService eventService = EventService();
-    
-    final DateTime start = (eventData['startTimestamp'] as Timestamp).toDate();
-    final DateTime end = (eventData['endTimestamp'] as Timestamp).toDate();
-    final String dateFormatted = DateFormat('dd/MM/yyyy').format(start);
-    final String timeFormatted = "${DateFormat('h:mm a').format(start)} a ${DateFormat('h:mm a').format(end)}";
+    Map<String, dynamic> data =
+        widget.eventSnapshot.data() as Map<String, dynamic>;
+
+    String title = data['title'] ?? 'Evento sin título';
+    String description = data['description'] ?? 'Sin descripción';
+    String imageUrl = data['imageUrl'] ?? '';
+    String locationId = data['locationId'] ?? '';
+
+    // --- LÓGICA DE FECHA Y HORA ACTUALIZADA ---
+    DateTime date = data['date'] != null
+        ? (data['date'] as Timestamp).toDate()
+        : DateTime.now();
+    String dateString = DateFormat('EEEE d, MMMM yyyy', 'es_MX').format(date);
+
+    String startTime = data['startTime'] ?? '--:--';
+    String endTime = data['endTime'] ?? ''; // Verificamos si existe hora de fin
+
+    // Si hay hora de fin, mostramos el rango "10:00 - 12:00", si no, solo "10:00"
+    String timeDisplay =
+        endTime.isNotEmpty ? "$startTime - $endTime" : startTime;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Detalles del evento"),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        foregroundColor: Colors.white,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Color(0xFF1E4079), Color(0xFF001F3F)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      backgroundColor: Colors.white,
+      body: Stack(
+        children: [
+          // Imagen
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 300,
+            child: imageUrl.isNotEmpty
+                ? Image.network(imageUrl, fit: BoxFit.cover)
+                : Container(color: Colors.grey[300]),
+          ),
+          // Botón Atrás
+          Positioned(
+            top: 40,
+            left: 20,
+            child: CircleAvatar(
+              backgroundColor: Colors.white,
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.black),
+                onPressed: () => Navigator.pop(context),
+              ),
             ),
           ),
-        ),
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // IMAGEN GRANDE
-            Container(
-              height: 250,
-              width: double.infinity,
-              decoration: BoxDecoration(
-                image: DecorationImage(
-                  image: NetworkImage(
-                    eventData['imageUrl'] ?? 'https://via.placeholder.com/400x200',
-                  ),
-                  fit: BoxFit.cover,
+
+          // Contenido
+          Positioned.fill(
+            top: 250,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(30),
+                  topRight: Radius.circular(30),
                 ),
               ),
-              child: Stack(
-                children: [
-                  Positioned(
-                    top: 20,
-                    left: 20,
-                    child: Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            DateFormat('d').format(start),
-                            style: const TextStyle(
-                              fontSize: 24, 
-                              fontWeight: FontWeight.bold,
-                              color: Color(0xFF1E4079)
-                            ),
-                          ),
-                          Text(
-                            DateFormat('MMM').format(start).toUpperCase(),
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                ],
-              ),
-            ),
-
-            // INFORMACIÓN
-            Padding(
-              padding: const EdgeInsets.all(20.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    eventData['title'] ?? 'Evento sin título',
+                    title,
                     style: const TextStyle(
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E4079),
-                    ),
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Color(0xFF203957)),
                   ),
                   const SizedBox(height: 15),
-                  
-                  Text(
-                    "Descripción:",
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                  ),
-                  Text(
-                    eventData['description'] ?? 'Sin descripción disponible.',
-                    style: TextStyle(color: Colors.grey[700], height: 1.5),
-                  ),
-                  const SizedBox(height: 25),
 
-                  _buildInfoRow(Icons.business, "Organizado por:", eventData['organizerName'] ?? 'Desconocido'),
+                  // Hora corregida aquí
+                  _buildInfoRow(
+                      Icons.calendar_month, "$dateString  |  $timeDisplay"),
                   const SizedBox(height: 10),
-                  _buildInfoRow(Icons.calendar_today, "Fecha y Hora:", "$dateFormatted - $timeFormatted"),
-                  const SizedBox(height: 10),
-                  _buildInfoRow(Icons.location_on, "Ubicación:", eventData['locationName'] ?? 'Por definir'),
-                  
-                  const SizedBox(height: 40),
 
-                  // LÓGICA DE BOTONES (ASISTIR / CANCELAR)
-                  StreamBuilder<bool>(
-                    stream: eventService.isUserRegistered(eventId),
+                  FutureBuilder<DocumentSnapshot>(
+                    future: locationId.isNotEmpty
+                        ? FirebaseFirestore.instance
+                            .collection('locations')
+                            .doc(locationId)
+                            .get()
+                        : null,
                     builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
+                      String locationName = "Ubicación por definir";
+                      if (snapshot.hasData && snapshot.data!.exists) {
+                        locationName = snapshot.data!.get('name') ??
+                            "Ubicación desconocida";
                       }
-
-                      final bool isRegistered = snapshot.data ?? false;
-
-                      return Column(
-                        children: [
-                          // Botón Principal
-                          SizedBox(
-                            width: double.infinity,
-                            height: 55,
-                            child: ElevatedButton.icon(
-                              onPressed: isRegistered 
-                                ? null // Deshabilitado visualmente si ya está registrado
-                                : () => _confirmAttendance(context, eventService),
-                              icon: Icon(isRegistered ? Icons.check : Icons.bookmark_add),
-                              label: Text(
-                                isRegistered ? "Ya estás registrado" : "Asistir",
-                                style: const TextStyle(fontSize: 18),
-                              ),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: isRegistered ? Colors.green : const Color(0xFF1E4079),
-                                disabledBackgroundColor: Colors.green.shade300,
-                                disabledForegroundColor: Colors.white,
-                                foregroundColor: Colors.white,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(30),
-                                ),
-                              ),
-                            ),
-                          ),
-                          
-                          // Opción de Cancelar (Solo si está registrado)
-                          if (isRegistered) ...[
-                            const SizedBox(height: 15),
-                            TextButton.icon(
-                              onPressed: () => _confirmCancellation(context, eventService),
-                              icon: const Icon(Icons.cancel_outlined, color: Colors.red),
-                              label: const Text(
-                                "Cancelar mi asistencia",
-                                style: TextStyle(color: Colors.red, fontSize: 16),
-                              ),
-                            ),
-                          ]
-                        ],
-                      );
+                      return _buildInfoRow(Icons.location_on, locationName);
                     },
                   ),
+                  const SizedBox(height: 20),
+
+                  const Text("Acerca del evento",
+                      style:
+                          TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Text(description,
+                          style: const TextStyle(
+                              fontSize: 15,
+                              color: Colors.black87,
+                              height: 1.5)),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+                  _buildActionButtons(),
                 ],
               ),
             ),
-          ],
-        ),
+          )
+        ],
       ),
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, color: Colors.grey[800], size: 20),
-        const SizedBox(width: 10),
-        Expanded(
-          child: RichText(
-            text: TextSpan(
-              style: const TextStyle(color: Colors.black, fontSize: 15),
-              children: [
-                TextSpan(text: "$label ", style: const TextStyle(fontWeight: FontWeight.bold)),
-                TextSpan(text: value),
-              ],
+  Widget _buildActionButtons() {
+    // 1. SI ES ORGANIZADOR, SOLO MOSTRAMOS UN TEXTO INFORMATIVO
+    if (widget.isOrganizer) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(15),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: Colors.grey.shade300),
+        ),
+        child: const Text(
+          "Vista de Organizador (Solo lectura)",
+          textAlign: TextAlign.center,
+          style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold),
+        ),
+      );
+    }
+
+    if (_isRegistering) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (_isRegistered) {
+      return Column(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: null,
+              icon: const Icon(Icons.check_circle, color: Colors.white),
+              label: const Text("Ya estás registrado",
+                  style: TextStyle(
+                      color: Colors.white, fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                disabledBackgroundColor: Colors.green.shade400,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15)),
+              ),
             ),
+          ),
+          const SizedBox(height: 10),
+          TextButton(
+            onPressed: _cancelRegistration,
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text(
+              "Eliminar registro",
+              style: TextStyle(
+                  fontWeight: FontWeight.w600,
+                  decoration: TextDecoration.underline),
+            ),
+          )
+        ],
+      );
+    } else {
+      return SizedBox(
+        width: double.infinity,
+        height: 50,
+        child: ElevatedButton(
+          onPressed: _registerForEvent,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF2660A5),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          ),
+          child: const Text(
+            "Registrarme al evento",
+            style: TextStyle(
+                fontSize: 16, color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-      ],
-    );
-  }
-
-  // Alerta para Registrarse
-  void _confirmAttendance(BuildContext context, EventService service) async {
-    try {
-      await service.registerAttendance(eventId);
-      if (context.mounted) {
-        showDialog(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            content: const Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.check_circle, color: Colors.green, size: 60),
-                SizedBox(height: 15),
-                Text("¡Asistencia Confirmada!", style: TextStyle(fontWeight: FontWeight.bold)),
-              ],
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text("Aceptar"))
-            ],
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      );
     }
   }
 
-  // Alerta para Cancelar
-  void _confirmCancellation(BuildContext context, EventService service) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Cancelar asistencia"),
-        content: const Text("¿Estás seguro de que deseas cancelar tu registro a este evento?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text("No, volver"),
+  Widget _buildInfoRow(IconData icon, String text) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+              color: const Color(0xFFF0F4F8),
+              borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: const Color(0xFF2660A5), size: 20),
+        ),
+        const SizedBox(width: 15),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+                fontSize: 14,
+                color: Color(0xFF203957),
+                fontWeight: FontWeight.w600),
           ),
-          TextButton(
-            onPressed: () async {
-              Navigator.of(ctx).pop(); // Cerrar alerta
-              await service.cancelAttendance(eventId); // Ejecutar borrado
-              if (context.mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("Registro cancelado correctamente"))
-                );
-              }
-            },
-            child: const Text("Sí, cancelar", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

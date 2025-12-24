@@ -4,88 +4,66 @@ import 'dart:io';
 import 'package:firebase_storage/firebase_storage.dart';
 
 class AuthService {
-  // Instancias de Firebase
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // --- 1. INICIAR SESIÓN (RF-002) ---
-  // Retorna el usuario si es exitoso, o lanza un error si falla.
+  // --- 1. INICIAR SESIÓN ---
   Future<User?> login(String email, String password) async {
     try {
       UserCredential result = await _auth.signInWithEmailAndPassword(
-        email: email.trim(), 
-        password: password.trim()
+        email: email.trim(),
+        password: password.trim(),
       );
       return result.user;
     } on FirebaseAuthException catch (e) {
-      // Manejo de errores comunes para mostrar mensajes claros en la UI
       String message = '';
-      if (e.code == 'user-not-found') {
-        message = 'No existe usuario con ese correo.';
+      if (e.code == 'user-not-found' || e.code == 'invalid-credential') {
+        message = 'Usuario o contraseña incorrectos.';
       } else if (e.code == 'wrong-password') {
         message = 'Contraseña incorrecta.';
       } else {
         message = 'Error al iniciar sesión: ${e.message}';
       }
-      throw message; // Enviamos el error a la pantalla para mostrarlo
+      throw message;
     } catch (e) {
-      throw 'Ocurrió un error inesperado.';
+      throw 'Ocurrió un error inesperado: $e';
     }
   }
 
-  // --- 2. REGISTRARSE (RF-001 y RF-004) ---
-  // Este es el método más importante: Crea la cuenta Y guarda los datos en Firestore
-  Future<User?> register({
+  // --- 2. REGISTRAR USUARIO (CORREGIDO) ---
+  Future<User?> registerUser({
     required String email,
     required String password,
     required String name,
-    required String role, // 'estudiante' u 'organizador'
-    String? department, // Parametro opcional (solo si es organizador)
+    required String lastName,
+    required String role,
+    String? department,
+    String? photoUrl, // <--- 1. Agregamos el parámetro aquí
   }) async {
     try {
-      // A. Crear el usuario en el sistema de Autenticación
       UserCredential result = await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password.trim(),
       );
-      
       User? user = result.user;
 
       if (user != null) {
-        // Preparamos los datos del usuario
-        Map<String, dynamic> userData = {
+        await _firestore.collection('users').doc(user.uid).set({
           'uid': user.uid,
           'email': email.trim(),
           'name': name.trim(),
+          'lastName': lastName.trim(),
           'role': role,
-          'createdAt': FieldValue.serverTimestamp(),
+          'department': department?.trim(),
+          'photoUrl': photoUrl, // <--- 2. Guardamos la URL recibida (o null)
           'interests': [],
-          'profilePhotoUrl': '',
-        };
-
-        // Solo agregamos el departamento si no es nulo
-        if (department != null && department.isNotEmpty) {
-          userData['department'] = department.trim();
-        }
-
-        await _firestore.collection('users').doc(user.uid).set(userData);
+          'createdAt': FieldValue.serverTimestamp(),
+        });
       }
-
       return user;
-
     } on FirebaseAuthException catch (e) {
-      String message = '';
-      if (e.code == 'weak-password') {
-        message = 'La contraseña es muy débil.';
-      } else if (e.code == 'email-already-in-use') {
-        message = 'Ya existe una cuenta con este correo.';
-      } else {
-        message = 'Error en el registro: ${e.message}';
-      }
-      throw message;
-    } catch (e) {
-      throw 'Ocurrió un error al registrar los datos.';
+      throw e.message ?? 'Error desconocido al registrar';
     }
   }
 
@@ -94,74 +72,30 @@ class AuthService {
     await _auth.signOut();
   }
 
-  // --- 4. RECUPERAR CONTRASEÑA (RF-003) ---
+  // --- 4. SUBIR FOTO (Lo mantenemos por si se usa en perfil) ---
+  Future<String> uploadProfilePhoto(File imageFile, String uid) async {
+    try {
+      final ref = _storage.ref().child('users/$uid/profile.jpg');
+      await ref.putFile(imageFile);
+      return await ref.getDownloadURL();
+    } catch (e) {
+      throw 'Error al subir imagen: $e';
+    }
+  }
+
+  // --- 5. OBTENER DATOS DEL USUARIO ACTUAL ---
+  Future<DocumentSnapshot> getUserData() async {
+    User? currentUser = _auth.currentUser;
+    if (currentUser == null) throw "No hay usuario logueado";
+    return await _firestore.collection('users').doc(currentUser.uid).get();
+  }
+
+  // --- 6. RECUPERAR CONTRASEÑA ---
   Future<void> sendPasswordResetEmail(String email) async {
     try {
       await _auth.sendPasswordResetEmail(email: email.trim());
     } on FirebaseAuthException catch (e) {
-      throw 'Error al enviar correo: ${e.message}';
+      throw e.message ?? "Error al enviar correo de recuperación";
     }
   }
-
-  // --- 5. OBTENER DATOS DEL USUARIO ACTUAL (Utilidad) ---
-  // Sirve para saber qué rol tiene el usuario logueado
-  Future<DocumentSnapshot> getUserData() async {
-    User? user = _auth.currentUser;
-    if (user != null) {
-      return await _firestore.collection('users').doc(user.uid).get();
-    } else {
-      throw 'No hay usuario logueado';
-    }
-  }
-
-   // 6. ACTUALIZAR DATOS DEL USUARIO (Nombre e Intereses)
-  Future<void> updateUserData({
-    required String name,
-    required List<String> interests,
-  }) async {
-    User? user = _auth.currentUser;
-    if (user == null) throw "No autenticado";
-
-    await _firestore.collection('users').doc(user.uid).update({
-      'name': name,
-      'interests': interests,
-    });
-  }
-
-  // 7. ACTUALIZAR CONTRASEÑA
-  Future<void> updatePassword(String newPassword) async {
-    User? user = _auth.currentUser;
-    if (user == null) throw "No autenticado";
-
-    try {
-      await user.updatePassword(newPassword);
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'requires-recent-login') {
-        throw 'Por seguridad, debes cerrar sesión y volver a entrar para cambiar tu contraseña.';
-      }
-      throw 'Error al cambiar contraseña: ${e.message}';
-    }
-  }
-
-  // 8. SUBIR FOTO DE PERFIL Y OBTENER URL
-  Future<String> uploadProfilePhoto(File imageFile) async {
-    User? user = _auth.currentUser;
-    if (user == null) throw "No autenticado";
-
-    // Creamos una referencia: users/UID/profile.jpg
-    final ref = _storage.ref().child('users/${user.uid}/profile.jpg');
-    
-    // Subimos el archivo
-    await ref.putFile(imageFile);
-    
-    // Obtenemos la URL pública
-    final url = await ref.getDownloadURL();
-
-    // Guardamos la URL en Firestore
-    await _firestore.collection('users').doc(user.uid).update({
-      'profilePhotoUrl': url,
-    });
-
-    return url;
-}
 }

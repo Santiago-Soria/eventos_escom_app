@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:proyecto_eventos/services/auth_gate.dart';
+import 'package:intl/date_symbol_data_local.dart';
+// 1. IMPORTA ESTO
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:proyecto_eventos/role_wrapper.dart';
 import 'firebase_options.dart';
 
 void main() async {
-  // 1. Asegurar que los Widgets estén listos antes de tocar código nativo
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. Inicializar Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  await initializeDateFormatting('es_MX', null);
 
   runApp(const MyApp());
 }
@@ -21,17 +22,27 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ESCOM Eventos',
       debugShowCheckedModeBanner: false,
-      
-      // 3. Aquí aplicarás tus colores de Figma más tarde
+      title: 'EventOS',
       theme: ThemeData(
-        primarySwatch: Colors.blue, // Usa los colores de la ESCOM
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF2660A5),
+        ),
         useMaterial3: true,
+        fontFamily: 'Nunito',
       ),
-
-      // 4. El "AuthGate" (Ver punto siguiente)
-      home: const AuthGate(), 
+      // 2. AGREGA ESTE BLOQUE DE LOCALIZACIÓN
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      supportedLocales: const [
+        Locale('es', 'MX'), // Español México
+        Locale('en', 'US'), // Inglés (Respaldo)
+      ],
+      // -------------------------------------
+      home: const RoleWrapper(),
     );
   }
 }
