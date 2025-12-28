@@ -179,6 +179,11 @@ class _ManageEventScreenState extends State<ManageEventScreen> {
             _modality == 'Virtual' ? _linkController.text.trim() : null,
         'locationId': _modality == 'Presencial' ? _selectedLocationId : null,
         'searchKeywords': _titleController.text.toLowerCase().split(' '),
+        'isApproved': false, // Requiere aprobación del admin
+        'approvedBy': null,
+        'approvedAt': null,
+        'status': 'pending', // pending, approved, rejected
+        'rejectionReason': null,
       };
 
       if (widget.eventSnapshot == null) {

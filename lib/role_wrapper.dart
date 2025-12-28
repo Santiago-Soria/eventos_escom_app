@@ -5,6 +5,8 @@ import 'package:proyecto_eventos/services/auth_services.dart';
 import 'package:proyecto_eventos/screens/home/student_home.dart';
 import 'package:proyecto_eventos/screens/home/organizer_home.dart';
 import 'package:proyecto_eventos/screens/auth/login_screen.dart';
+// Importaremos AdminHome cuando lo creemos
+import 'package:proyecto_eventos/screens/admin/admin_home.dart';
 
 class RoleWrapper extends StatelessWidget {
   const RoleWrapper({super.key});
@@ -29,7 +31,6 @@ class RoleWrapper extends StatelessWidget {
         }
 
         // 2. Si hay usuario, buscar su ROL en Firestore
-        // CORRECCIÓN: Llamamos a getUserData() sin argumentos
         return FutureBuilder<DocumentSnapshot>(
           future: authService.getUserData(),
           builder: (context, snapshot) {
@@ -49,7 +50,10 @@ class RoleWrapper extends StatelessWidget {
                 snapshot.data!.data() as Map<String, dynamic>;
             String role = data['role'] ?? 'estudiante';
 
-            if (role == 'organizador') {
+            // REDIRECCIÓN SEGÚN ROL
+            if (role == 'admin') {
+              return const AdminHome();
+            } else if (role == 'organizador') {
               return const OrganizerHome();
             } else {
               return const StudentHome();

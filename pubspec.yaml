@@ -13,6 +13,8 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
+  syncfusion_flutter_charts: ^28.1.33
+
   cupertino_icons: ^1.0.2
   
   # Firebase

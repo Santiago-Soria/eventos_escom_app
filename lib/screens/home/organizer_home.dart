@@ -506,11 +506,15 @@ class _OrganizerHomeState extends State<OrganizerHome> {
   Stream<QuerySnapshot> _getMyEventsStream() {
     Query query = FirebaseFirestore.instance.collection('events');
     query = query.where('organizerId', isEqualTo: currentUser?.uid);
+    
+    // REMOVER el filtro de isApproved para que vean todos sus eventos
+    // query = query.where('isApproved', isEqualTo: true); // ELIMINA ESTA LÍNEA
+    
     if (_selectedCategoryId != null)
       query = query.where('categoryId', isEqualTo: _selectedCategoryId);
     if (_selectedLocationId != null)
       query = query.where('locationId', isEqualTo: _selectedLocationId);
-    return query.snapshots();
+    return query.orderBy('date', descending: true).snapshots();
   }
 
   Widget _buildFloatingButton() {

@@ -259,6 +259,9 @@ class _ExploreEventsTabState extends State<ExploreEventsTab> {
   Stream<QuerySnapshot> _getEventsStream() {
     Query query = FirebaseFirestore.instance.collection('events');
 
+    // SOLO MOSTRAR EVENTOS APROBADOS
+    query = query.where('isApproved', isEqualTo: true);
+
     // Filtros de servidor (Categoría y Ubicación)
     if (_selectedCategoryId != null) {
       query = query.where('categoryId', isEqualTo: _selectedCategoryId);
